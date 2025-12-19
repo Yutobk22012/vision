@@ -1,3 +1,7 @@
 flask
 pymysql
+<<<<<<< HEAD
 gunicorn
+=======
+gunicorn
+>>>>>>> c686dc864d14c0c4eae7dace8f9e3ca8e762fc61
