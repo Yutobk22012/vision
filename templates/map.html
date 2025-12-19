@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>nx10</title>
+  <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+
+  <style>
+    body {
+      font-family: "Segoe UI", "Hiragino Sans", sans-serif;
+      margin: 20px;
+      background-color: #fafafa;
+    }
+    h2 { margin-bottom: 10px; }
+    #buttons { margin: 10px 0; }
+    #filters { margin: 10px 0; background: #eef2f5; padding: 10px; border-radius: 8px; }
+    button {
+      margin-right: 5px;
+      padding: 6px 12px;
+      border: none;
+      border-radius: 6px;
+      background: #007acc;
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #005fa3; }
+    input {
+      padding: 3px;
+      margin: 0 5px;
+      border-radius: 4px;
+      border: 1px solid #bbb;
+    }
+    hr {
+      margin: 10px 0;
+      border: 0;
+      border-top: 1px solid #ccc;
+    }
+  </style>
+</head>
+<body>
+  <h2>センサデータ可視化</h2>
+
+  <div id="buttons">
+    <strong>センサ選択：</strong>
+    <button onclick="updateMetric('lux')">lux</button>
+    <button onclick="updateMetric('eco2')">eCO₂</button>
+    <button onclick="updateMetric('temperature')">Temperature</button>
+    <button onclick="updateMetric('humidity')">Humidity</button>
+    <button onclick="updateMetric('dust_density')">Dust</button>
+    <button onclick="updateMetric('moisture')">Moisture</button>
+
+    <hr>
+
+    <strong>表示モード：</strong>
+    <button onclick="setMode('time')">▶ 時間変化</button>
+    <button onclick="setMode('all')">● 全データ</button>
+    <button onclick="setMode('heme')">時間変化ヒートマップ</button>
+    <button onclick="setMode('heat')"> ヒートマップ</button>
+
+    <hr>
+
+    <strong>座標系：</strong>
+    <button onclick="setCoord('XY')"> X/Y</button>
+    <button onclick="setCoord('AREA')"> areaX/areaY</button>
+  </div>
+
+  <div id="filters">
+    <strong>時刻範囲選択：</strong><br>
+    開始：
+    <input type="datetime-local" id="startTimeInput">
+    終了：
+    <input type="datetime-local" id="endTimeInput">
+    <button onclick="applyTimeFilter()"> フィルタ適用</button>
+    <button onclick="resetFilter()"> リセット</button>
+  </div>
+
+  <div id="coordSearch" class="panel" style="margin-top: 10px;">
+    <strong>座標検索</strong><br>
+
+    <span id="coordLabel1">X:</span>
+    <input type="number" id="coordInput1" step="0.01" style="width:90px">
+
+    <span id="coordLabel2">Y:</span>
+    <input type="number" id="coordInput2" step="0.01" style="width:90px">
+
+  <button onclick="pinCoordinate()" class="small">座標を表示</button>
+</div>
+
+
+  <div id="plot" style="width:100%;height:80vh;"></div>
+
+  <script>
+    let rawData = [];
+    let filteredData = [];
+    let currentMetric = "lux";
+    let currentMode = "time";   // "time" | "all" | "heat"
+    let currentCoord = "XY";    // "XY" | "AREA"
+    // X/Y 用 range（手動設定）
+    const rangeXY = {
+      x: [-1000, 15000],
+      y: [4000, 20000]
+    };
+
+    // AREA 用 range（手動設定 ★あなたが自由に変更★）
+    const rangeAREA = {
+      x: [-1000/2000, 15000/2000],     // ← areaX の表示範囲（例）
+      y: [4000/2000, 20000/2000]      // ← areaY の表示範囲（例）
+    };
+
+    // === データ取得 ===
+    function fetchData() {
+      fetch("/data")
+        .then(res => res.json())
+        .then(data => {
+          rawData = data;
+          filteredData = data;
+          renderPlot();
+        })
+        .catch(err => console.error("データ取得エラー:", err));
+    }
+
+    // === 各操作 ===
+    function updateMetric(metric) { currentMetric = metric; renderPlot(); }
+    function setMode(mode) { currentMode = mode; renderPlot(); }
+    function setCoord(coord) { currentCoord = coord; renderPlot(); }
+
+    // === 時刻フィルタ ===
+    function applyTimeFilter() {
+      const start = document.getElementById("startTimeInput").value;
+      const end = document.getElementById("endTimeInput").value;
+
+      if (!start && !end) {
+        filteredData = rawData;
+      } else {
+        const startTime = start ? new Date(start).getTime() : null;
+        const endTime = end ? new Date(end).getTime() : null;
+
+        filteredData = rawData.filter(d => {
+          const ts = new Date(d.timestamp).getTime();
+          return (
+            (startTime ? ts >= startTime : true) &&
+            (endTime ? ts <= endTime : true)
+          );
+        });
+      }
+
+      renderPlot();
+    }
+
+    function resetFilter() {
+      filteredData = rawData;
+      document.getElementById("startTimeInput").value = "";
+      document.getElementById("endTimeInput").value = "";
+      renderPlot();
+    }
+
+    // === 時刻を10分単位に丸める関数 ===
+    function roundTo10min(ts) {
+      const d = new Date(ts);
+
+      // 無効な日付はそのまま返す（timestamp が ISO 形式でない場合対策）
+      if (isNaN(d.getTime())) return ts;
+
+      const minutes = d.getMinutes();
+      const rounded = Math.floor(minutes / 10) * 10;
+
+      d.setMinutes(rounded);
+      d.setSeconds(0);
+      d.setMilliseconds(0);
+
+      // ISO形式に統一
+      return d.toISOString();
+    }
+
+
+    // === 描画切り替え ===
+    function renderPlot() {
+      console.log("X range:", Math.min(...filteredData.map(d => d.X)), Math.max(...filteredData.map(d => d.X)));
+      console.log("Y range:", Math.min(...filteredData.map(d => d.Y)), Math.max(...filteredData.map(d => d.Y)));
+
+      if (!filteredData || filteredData.length === 0) {
+        Plotly.newPlot("plot", [], { title: "該当データがありません" });
+        return;
+      }
+      if (currentMode === "time") createAnimatedPlot(currentMetric);
+      else if (currentMode === "all") createAllPointsPlot(currentMetric);
+      else if (currentMode === "heme") createAnimatedHeatmapPlot(currentMetric);
+      else if (currentMode === "heat") createValueHeatmapPlot(currentMetric);
+    }
+
+    function getCoordValues(data) {
+      if (currentCoord === "AREA") {
+        return { x: data.map(d => parseFloat(d.areaX)), y: data.map(d => parseFloat(d.areaY)) };
+      } else {
+        return { x: data.map(d => parseFloat(d.X)), y: data.map(d => parseFloat(d.Y)) };
+      }
+    }
+
+    function getPlotSettings() {
+      if (currentCoord === "AREA") {
+        return {
+          bgImage: bgImageAREA,
+          range: rangeAREA
+        };
+      }
+      return {
+        bgImage: bgImageXY,
+        range: rangeXY
+      };
+    }
+
+
+    // === 値ベースヒートマップ ===
+    function createValueHeatmapPlot(metric) {
+
+      // 共通処理（データ取得）
+      const coords = getCoordValues(filteredData);
+      const values = filteredData.map(d => parseFloat(d[metric]));
+
+      // === ★ areaX / areaY のとき：1×1 の整数グリッドを作る ===
+      if (currentCoord === "AREA") {
+
+        // 1. 範囲を整数で決定
+        const minX = Math.floor(Math.min(...coords.x));
+        const maxX = Math.ceil(Math.max(...coords.x));
+        const minY = Math.floor(Math.min(...coords.y));
+        const maxY = Math.ceil(Math.max(...coords.y));
+
+        const xAxis = [];
+        const yAxis = [];
+        for (let x = minX; x <= maxX; x++) xAxis.push(x);
+        for (let y = minY; y <= maxY; y++) yAxis.push(y);
+
+        // 2. 行列生成
+        const zMatrix = [];
+        for (let yi = 0; yi < yAxis.length; yi++) {
+          const row = [];
+          for (let xi = 0; xi < xAxis.length; xi++) {
+
+            const cellData = filteredData.filter(d => 
+              Math.floor(parseFloat(d.areaX)) === xAxis[xi] &&
+              Math.floor(parseFloat(d.areaY)) === yAxis[yi]
+            );
+
+            if (cellData.length > 0) {
+              const avg = cellData.reduce((a, d) => a + parseFloat(d[metric]), 0) / cellData.length;
+              row.push(avg);
+            } else {
+              row.push(NaN);
+            }
+          }
+          zMatrix.push(row);
+        }
+
+        // 3. 描画
+        const trace = {
+          x: xAxis,
+          y: yAxis,
+          z: zMatrix,
+          type: "heatmap",
+          colorscale: "Viridis",
+          colorbar: { title: metric },
+          hoverongaps: false,
+          zsmooth: false // ← 補間なし（整数マスがハッキリ）
+        };
+
+        // === 背景画像（AREA用） ===
+        const layout = {
+          title: `Heatmap - ${metric}（areaX/areaY）`,
+          xaxis: { title: "areaX", range: [minX - 0.5, maxX + 0.5] },
+          yaxis: { title: "areaY", range: [minY - 0.5, maxY + 0.5], scaleanchor: "x", scaleratio: 1 },
+          images: [{
+            source: "/static/nexus_10F.png",
+          xref: "x",
+          yref: "y",
+          x: -30000 / 2000,          // あなたのデータ最小X
+          y: 62500 / 2000,          // あなたのデータ最大Y
+          sizex: 100000 / 2000,      // X範囲幅
+          sizey: 100500 / 2000,      // Y範囲高さ
+          sizing: "stretch",
+          opacity: 0.5,     // 半透明
+          layer: "below"
+          }]
+        };
+
+        Plotly.newPlot("plot", [trace], layout);
+        return;
+      }
+
+      // === ★ X / Y のとき：今まで通りの細かいヒートマップ ===
+      const nGrid = 30;
+      let xMin = Math.min(...coords.x), xMax = Math.max(...coords.x);
+      let yMin = Math.min(...coords.y), yMax = Math.max(...coords.y);
+      const padX = (xMax - xMin) * 0.05;
+      const padY = (yMax - yMin) * 0.05;
+      xMin -= padX; xMax += padX;
+      yMin -= padY; yMax += padY;
+
+      const xStep = (xMax - xMin) / nGrid;
+      const yStep = (yMax - yMin) / nGrid;
+
+      let zMatrix = [];
+      for (let i = 0; i < nGrid; i++) {
+        let row = [];
+        for (let j = 0; j < nGrid; j++) {
+          const x0 = xMin + j * xStep;
+          const x1 = x0 + xStep;
+          const y0 = yMin + i * yStep;
+          const y1 = y0 + yStep;
+
+          const inCell = filteredData.filter(d => {
+            const xVal = parseFloat(d.X);
+            const yVal = parseFloat(d.Y);
+            return xVal >= x0 && xVal < x1 && yVal >= y0 && yVal < y1;
+          });
+
+          if (inCell.length > 0) {
+            const avg = inCell.reduce((a, d) => a + parseFloat(d[metric]), 0) / inCell.length;
+            row.push(avg);
+          } else {
+            row.push(NaN);
+          }
+        }
+        zMatrix.push(row);
+      }
+
+      const xAxis = Array.from({length: nGrid}, (_, j) => xMin + j * xStep + xStep / 2);
+      const yAxis = Array.from({length: nGrid}, (_, i) => yMin + i * yStep + yStep / 2);
+
+      const trace = {
+        x: xAxis, y: yAxis, z: zMatrix,
+        type: 'heatmap', colorscale: 'Viridis',
+        colorbar: { title: metric }, hoverongaps: false, zsmooth: "best"
+      };
+
+      const layout = {
+        title: `Heatmap - ${metric}（X/Y）`,
+        xaxis: { title: "X" },
+        yaxis: { title: "Y", scaleanchor: "x", scaleratio: 1 },
+        images: [{
+          source: "/static/nexus_10F.png",
+          xref: "x",
+          yref: "y",
+          x: -30000,          // あなたのデータ最小X
+          y: 62500,          // あなたのデータ最大Y
+          sizex: 100000,      // X範囲幅
+          sizey: 100500,      // Y範囲高さ
+          sizing: "stretch",
+          opacity: 0.5,     // 半透明
+          layer: "below"
+        }]
+      };
+
+      Plotly.newPlot("plot", [trace], layout);
+    }
+
+    // === 時間変化ヒートマップ（10分ごと） ===
+    function createAnimatedHeatmapPlot(metric) {
+      // --- 背景画像の実座標（あなたが指定したもの） ---
+      const BG_X_MIN = -30000;
+      const BG_Y_MAX = 62500;
+      const BG_SIZEX = 100000;  // 70000 - (-30000)
+      const BG_SIZEY = 100500;  // 62500 - (-38000)
+      const AREA_SCALE = 2000;  // areaX = X / 2000, areaY = Y / 2000
+
+      // --- bgImage を先に定義（関数内で使うので必ず最初） ---
+      const bgImage = (currentCoord === "AREA") ? {
+        source: "/static/nexus_10F.png",
+        xref: "x", yref: "y",
+        x: BG_X_MIN / AREA_SCALE,
+        y: BG_Y_MAX / AREA_SCALE,
+        sizex: BG_SIZEX / AREA_SCALE,
+        sizey: BG_SIZEY / AREA_SCALE,
+        sizing: "stretch",
+        opacity: 0.5,
+        layer: "below"
+      } : {
+        source: "/static/nexus_10F.png",
+        xref: "x", yref: "y",
+        x: BG_X_MIN,
+        y: BG_Y_MAX,
+        sizex: BG_SIZEX,
+        sizey: BG_SIZEY,
+        sizing: "stretch",
+        opacity: 0.5,
+        layer: "below"
+      };
+
+      // 全フレーム共通の z スケールを作る
+      const allValues = filteredData
+        .map(d => parseFloat(d[metric]))
+        .filter(v => !isNaN(v));
+
+      const globalMin = Math.min(...allValues);
+      const globalMax = Math.max(...allValues);
+
+      // --- 10分丸めでグループ化 ---
+      const groups = {};
+      filteredData.forEach(d => {
+        const key = roundTo10min(d.timestamp);
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(d);
+      });
+      const timestamps = Object.keys(groups).sort((a,b)=>new Date(a)-new Date(b));
+      if (timestamps.length === 0) {
+        Plotly.newPlot("plot", [], { title: "該当データがありません" });
+        return;
+      }
+
+      // --- 範囲（AREA は整数セル範囲、XY は背景の実座標で固定） ---
+      let useRange;
+      if (currentCoord === "AREA") {
+        const areaXs = filteredData.map(d => parseFloat(d.areaX)).filter(v => !isNaN(v));
+        const areaYs = filteredData.map(d => parseFloat(d.areaY)).filter(v => !isNaN(v));
+        const minAX = Math.floor(Math.min(...areaXs));
+        const maxAX = Math.ceil(Math.max(...areaXs));
+        const minAY = Math.floor(Math.min(...areaYs));
+        const maxAY = Math.ceil(Math.max(...areaYs));
+        // 余裕を少し持たせる（表示マージン）
+        useRange = { x: [minAX - 0.5, maxAX + 0.5], y: [minAY - 0.5, maxAY + 0.5], integerGrid: true, ixMin: minAX, ixMax: maxAX, iyMin: minAY, iyMax: maxAY };
+      } else {
+        useRange = { x: [BG_X_MIN, BG_X_MIN + BG_SIZEX], y: [BG_Y_MAX - BG_SIZEY, BG_Y_MAX], integerGrid: false };
+      }
+
+      // --- frames 作成（各タイムスタンプごと） ---
+      const frames = timestamps.map(ts => {
+        const group = groups[ts];
+
+        if (currentCoord === "AREA") {
+          // AREA: 1x1 の整数セル (ixMin..ixMax, iyMin..iyMax)
+          const ixMin = useRange.ixMin, ixMax = useRange.ixMax;
+          const iyMin = useRange.iyMin, iyMax = useRange.iyMax;
+          const xAxis = [];
+          const yAxis = [];
+          for (let x = ixMin; x <= ixMax; x++) xAxis.push(x + 0.5); // セル中心で表示
+          for (let y = iyMin; y <= iyMax; y++) yAxis.push(y + 0.5);
+
+          const z = [];
+          for (let yi = iyMin; yi <= iyMax; yi++) {
+            const row = [];
+            for (let xi = ixMin; xi <= ixMax; xi++) {
+              // このセルに入るデータを抽出（areaX, areaY は整数扱い）
+              const cell = group.filter(d => {
+                const ax = Math.floor(parseFloat(d.areaX));
+                const ay = Math.floor(parseFloat(d.areaY));
+                return ax === xi && ay === yi && !isNaN(parseFloat(d[metric]));
+              });
+              if (cell.length > 0) {
+                const avg = cell.reduce((a,c)=>a+parseFloat(c[metric]),0)/cell.length;
+                row.push(avg);
+              } else {
+                row.push(NaN);
+              }
+            }
+            z.push(row);
+          }
+
+          return {
+            name: ts,
+            data: [{
+              x: xAxis,
+              y: yAxis,
+              z: z,
+              type: "heatmap",
+              colorscale: "Viridis",
+              zsmooth: false,           // 補間を切る（1x1セルを明確に）
+              hoverongaps: false,
+              showscale: true,
+              colorbar: { title: metric },
+              zmin:globalMin,
+              zmax:globalMax
+            }]
+          };
+        } else {
+          // XY: 従来の細かいグリッド（例: 30x30）
+          const nGrid = 30;
+          const xMin = useRange.x[0], xMax = useRange.x[1];
+          const yMin = useRange.y[0], yMax = useRange.y[1];
+          const xStep = (xMax - xMin) / nGrid;
+          const yStep = (yMax - yMin) / nGrid;
+
+          const coords = group.map(d => ({ x: parseFloat(d.X), y: parseFloat(d.Y), v: parseFloat(d[metric]) }));
+
+          const z = [];
+          for (let i = 0; i < nGrid; i++) {
+            const row = [];
+            for (let j = 0; j < nGrid; j++) {
+              const x0 = xMin + j * xStep, x1 = x0 + xStep;
+              const y0 = yMin + i * yStep, y1 = y0 + yStep;
+              const cell = coords.filter(p => !isNaN(p.x) && !isNaN(p.y) && p.x >= x0 && p.x < x1 && p.y >= y0 && p.y < y1);
+              row.push(cell.length ? (cell.reduce((a,c)=>a+c.v,0)/cell.length) : NaN);
+            }
+            z.push(row);
+          }
+
+          const xAxis = Array.from({length: nGrid}, (_, j) => xMin + j * xStep + xStep/2);
+          const yAxis = Array.from({length: nGrid}, (_, i) => yMin + i * yStep + yStep/2);
+
+          return {
+            name: ts,
+            data: [{
+              x: xAxis,
+              y: yAxis,
+              z: z,
+              type: "heatmap",
+              colorscale: "Viridis",
+              zsmooth: "best",
+              hoverongaps: false,
+              showscale: true,
+              colorbar: { title: metric },
+              zmin:globalMin,
+              zmax:globalMax
+            }]
+          };
+        }
+      });
+
+      // --- 初期フレーム（存在確認） ---
+      const initial = frames[0] ? frames[0].data : [{ x: [], y: [], z: [] }];
+
+      // --- layout（背景画像は先に定義した bgImage を使う） ---
+      const layout = {
+        title: `時間変化ヒートマップ - ${metric}（10分毎）`,
+        xaxis: { title: currentCoord === "AREA" ? "areaX" : "X", range: useRange.x },
+        yaxis: { title: currentCoord === "AREA" ? "areaY" : "Y", range: useRange.y, scaleanchor: "x", scaleratio: 1 },
+        images: [bgImage],
+        sliders: [{
+          pad: { t: 40 },
+          currentvalue: { visible: true, prefix: "時刻: " },
+          steps: timestamps.map(ts => ({
+            label: ts.slice(0,16).replace("T"," "),
+            method: "animate",
+            args: [[ts], { mode: "immediate", frame: { duration: 0, redraw: true } }]
+          }))
+        }],
+        updatemenus: [{
+          type: "buttons",
+          buttons: [
+            { label: "Play", method: "animate", args: [null, { fromcurrent: true, frame: { duration: 800, redraw: true } }] },
+            { label: "Pause", method: "animate", args: [[null], { mode: "immediate" }] }
+          ]
+        }]
+      };
+
+      // --- プロット作成 ---
+      Plotly.newPlot("plot", initial, layout).then(() => {
+        Plotly.addFrames("plot", frames);
+      });
+
+    } 
+
+
+    // === 全データ点モード ===
+    function createAllPointsPlot(metric) {
+      const coords = getCoordValues(filteredData);
+      const values = filteredData.map(d => parseFloat(d[metric]));
+      const globalMin = Math.min(...values);
+      const globalMax = Math.max(...values);
+
+      const trace = {
+        x: coords.x,
+        y: coords.y,
+        text: filteredData.map(d => `${metric}: ${d[metric]}<br>Time: ${d.timestamp}`),
+        mode: 'markers',
+        type: 'scatter',
+        marker: {
+          size: values.map(v => Math.max(8, Math.sqrt(v) * 2)),
+          color: values,
+          colorscale: 'Viridis',
+          colorbar: { title: metric },
+          cmin: globalMin,
+          cmax: globalMax
+        }
+      };
+
+      
+      const bgImage = (currentCoord === "AREA")
+        ? {
+          source: "/static/nexus_10F.png",
+          xref: "x",
+          yref: "y",
+          x: -30000 / 2000,          // あなたのデータ最小X
+          y: 62500 / 2000,          // あなたのデータ最大Y
+          sizex: 100000 / 2000,      // X範囲幅
+          sizey: 100500 / 2000,      // Y範囲高さ
+          sizing: "stretch",
+          opacity: 0.5,     // 半透明
+          layer: "below"
+        }
+      : {
+          source: "/static/nexus_10F.png",
+          xref: "x",
+          yref: "y",
+          x: -30000,        // 左上の X
+          y: 62500,         // 左上の Y
+          sizex: 100000,     // 幅
+          sizey: 100500,     // 高さ
+          sizing: "stretch",
+          opacity: 0.5,     // 半透明
+          layer: "below"
+      };
+
+      const useRange = (currentCoord === "AREA") ? rangeAREA : rangeXY;
+      const layout = {
+        title: `All Data - ${metric}（背景マップ付き）`,
+        xaxis: {
+          title: currentCoord === "AREA" ? "areaX" : "X",
+          range: useRange.x,          // ★ テストで表示できた範囲に合わせる
+          showgrid: true,
+          zeroline: false
+        },
+        yaxis: {
+          title: currentCoord === "AREA" ? "areaY" : "Y",
+          range: useRange.y,             // ★ テスト時と同様に
+          scaleanchor: "x",
+          scaleratio: 1,
+          showgrid: true,
+          zeroline: false
+        },
+        images: [bgImage]
+      };
+      // === ★ 背景設定ここまで ===
+
+
+      Plotly.newPlot("plot", [trace], layout);
+    }
+
+    // === 時間変化モード（修正版） ===
+    function createAnimatedPlot(metric) {
+    const timestamps = [...new Set(filteredData.map(d => d.timestamp))];
+    const allValues = filteredData.map(d => parseFloat(d[metric]));
+    const globalMin = Math.min(...allValues);
+    const globalMax = Math.max(...allValues);
+
+
+    const bgImage = (currentCoord === "AREA")
+      ? {
+        source: "/static/nexus_10F.png",
+        xref: "x",
+        yref: "y",
+        x: -30000 / 2000,          // あなたのデータ最小X
+        y: 62500 / 2000,          // あなたのデータ最大Y
+        sizex: 100000 / 2000,      // X範囲幅
+        sizey: 100500 / 2000,      // Y範囲高さ
+        sizing: "stretch",
+        opacity: 0.5,     // 半透明
+        layer: "below"
+      }
+    : {
+        source: "/static/nexus_10F.png",
+        xref: "x",
+        yref: "y",
+        x: -30000,          // あなたのデータ最小X
+        y: 62500,          // あなたのデータ最大Y
+        sizex: 100000,      // X範囲幅
+        sizey: 100500,      // Y範囲高さ
+        sizing: "stretch",
+        opacity: 0.5,     // 半透明
+        layer: "below"
+    };
+
+    const useRange = (currentCoord === "AREA") ? rangeAREA : rangeXY;
+
+    // === フレーム生成 ===
+    const frames = timestamps.map(ts => {
+      const frameData = filteredData.filter(d => d.timestamp === ts);
+      const coords = getCoordValues(frameData);
+
+      return {
+        name: ts,
+        data: [{
+          x: coords.x,
+          y: coords.y,
+          text: frameData.map(d => `${metric}: ${d[metric]}<br>Time: ${d.timestamp}`),
+          mode: 'markers',
+          type: 'scatter',
+          marker: {
+            size: frameData.map(v => Math.max(8, Math.sqrt(v[metric]) * 2)),
+            color: frameData.map(d => d[metric]),
+            colorscale: 'Viridis',
+            colorbar: { title: metric },
+            cmin: globalMin,
+            cmax: globalMax
+          }
+        }]
+      };
+    });
+
+    const initialFrame = frames[0]?.data || [];
+
+    // === レイアウトに背景を挿入 ===
+    const layout = {
+      title: `Sensor Map - ${metric}（時間変化）`,
+      xaxis: {
+        title: currentCoord === "AREA" ? "areaX" : "X",
+        range: useRange.x,
+        showgrid: true
+      },
+      yaxis: {
+        title: currentCoord === "AREA" ? "areaY" : "Y",
+        range: useRange.y,
+        scaleanchor: "x",
+        scaleratio: 1,
+        showgrid: true
+      },
+      images: [bgImage],
+      updatemenus: [{
+        type: "buttons",
+        buttons: [
+          {
+            label: "Play",
+            method: "animate",
+            args: [null, {fromcurrent: true, frame: {duration: 800}, mode: "immediate"}]
+          },
+          {
+            label: "Pause",
+            method: "animate",
+            args: [[null], {mode: "immediate"}]
+          }
+        ]
+      }],
+      sliders: [{
+        currentvalue: {visible: true, prefix: "Time: "},
+        steps: timestamps.map(ts => ({
+          label: ts,
+          method: "animate",
+          args: [[ts], {mode: "immediate"}]
+        }))
+      }]
+    };
+
+    // === 正しい描画コール（1回だけ） ===
+    Plotly.newPlot("plot", initialFrame, layout).then(() => {
+      Plotly.addFrames("plot", frames);
+    });
+  }
+
+
+    // === 座標ピン表示（修正版） ===
+    function pinCoordinate() {
+      const v1 = parseFloat(document.getElementById("coordInput1").value);
+      const v2 = parseFloat(document.getElementById("coordInput2").value);
+
+      if (isNaN(v1) || isNaN(v2)) {
+        alert("座標を入力してください");
+        return;
+      }
+
+      let px = v1;
+      let py = v2;
+
+      // AREA モードならセル中心にピンを置く
+      if (currentCoord === "AREA") {
+        px = v1 + 0.5;
+        py = v2 + 0.5;
+      }
+
+      // === 既存のピンを削除 ===
+      const gd = document.getElementById("plot");
+      if (gd && gd.data) {
+        const pinIndexes = [];
+        gd.data.forEach((trace, i) => {
+          if (trace && trace.name === "PIN") {
+            pinIndexes.push(i);
+          }
+        });
+        if (pinIndexes.length > 0) {
+          Plotly.deleteTraces(gd, pinIndexes).catch(()=>{});
+        }
+      }
+
+      // === 新しいピン追加 ===
+      const pinTrace = {
+        x: [px],
+        y: [py],
+        mode: "markers+text",
+        type: "scatter",
+        marker: {
+          size: 20,
+          color: "red",
+          symbol: "triangle-up"
+        },
+        text: ["PIN"],
+        textposition: "top center",
+        name: "PIN"   // ← これが削除用の識別に使われる
+      };
+
+      Plotly.addTraces("plot", pinTrace);
+
+      console.log("ピン表示:", px, py);
+    }
+
+    fetchData();
+  </script>
+</body>
+</html>
