@@ -9,7 +9,7 @@ app = Flask(__name__)
 # === DB接続設定 ===
 def fetch_data():
     conn = pymysql.connect(
-        host="172.16.19.101",
+        host="192.168.0.199",
         user="online",
         password="pass",
         database="test",
