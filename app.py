@@ -1,32 +1,6 @@
 from flask import Flask, render_template, jsonify
-import pymysql
-from datetime import datetime, timezone, timedelta
-
-JST = timezone(timedelta(hours=9))
 
 app = Flask(__name__)
-
-# === DB接続設定 ===
-def fetch_data():
-    conn = pymysql.connect(
-        host="192.168.0.199",
-        user="online",
-        password="pass",
-        database="test",
-        charset="utf8mb4",
-        cursorclass=pymysql.cursors.DictCursor
-    )
-    with conn:
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT X, Y, areaX, areaY, lux, eco2, temperature, humidity, dust_density, moisture, timestamp FROM nx10")
-            data = cursor.fetchall()
-
-            # timestampをISO形式に変換
-            for d in data:
-                if isinstance(d["timestamp"], datetime):
-                    d["timestamp"] = d["timestamp"].astimezone(JST).isoformat()
-
-    return data
 
 @app.route("/")
 def index():
@@ -34,7 +8,21 @@ def index():
 
 @app.route("/data")
 def data():
-    return jsonify(fetch_data())
+    # デプロイ確認用ダミーデータ
+    return jsonify([
+        {
+            "X": 0,
+            "Y": 0,
+            "areaX": 0,
+            "areaY": 0,
+            "lux": 100,
+            "eco2": 400,
+            "temperature": 25,
+            "humidity": 50,
+            "dust_density": 10,
+            "timestamp": "2025-01-01T10:00:00"
+        }
+    ])
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0",port=5000,debug=False)
+    app.run()
