@@ -271,16 +271,16 @@
           xaxis: { title: "areaX", range: [minX - 0.5, maxX + 0.5] },
           yaxis: { title: "areaY", range: [minY - 0.5, maxY + 0.5], scaleanchor: "x", scaleratio: 1 },
           images: [{
-            source: "/static/nexus_10F.png",
-          xref: "x",
-          yref: "y",
-          x: -30000 / 2000,          // あなたのデータ最小X
-          y: 62500 / 2000,          // あなたのデータ最大Y
-          sizex: 100000 / 2000,      // X範囲幅
-          sizey: 100500 / 2000,      // Y範囲高さ
-          sizing: "stretch",
-          opacity: 0.5,     // 半透明
-          layer: "below"
+            source: "{{ url_for('static', filename='nexus_10F.png') }}",
+            xref: "x",
+            yref: "y",
+            x: -30000 / 2000,          // あなたのデータ最小X
+            y: 62500 / 2000,          // あなたのデータ最大Y
+            sizex: 100000 / 2000,      // X範囲幅
+            sizey: 100500 / 2000,      // Y範囲高さ
+            sizing: "stretch",
+            opacity: 0.5,     // 半透明
+            layer: "below"
           }]
         };
 
@@ -339,7 +339,7 @@
         xaxis: { title: "X" },
         yaxis: { title: "Y", scaleanchor: "x", scaleratio: 1 },
         images: [{
-          source: "/static/nexus_10F.png",
+          source: "{{ url_for('static', filename='nexus_10F.png') }}",
           xref: "x",
           yref: "y",
           x: -30000,          // あなたのデータ最小X
@@ -366,7 +366,7 @@
 
       // --- bgImage を先に定義（関数内で使うので必ず最初） ---
       const bgImage = (currentCoord === "AREA") ? {
-        source: "/static/nexus_10F.png",
+        source: "{{ url_for('static', filename='nexus_10F.png') }}",
         xref: "x", yref: "y",
         x: BG_X_MIN / AREA_SCALE,
         y: BG_Y_MAX / AREA_SCALE,
@@ -376,7 +376,7 @@
         opacity: 0.5,
         layer: "below"
       } : {
-        source: "/static/nexus_10F.png",
+        source: "{{ url_for('static', filename='nexus_10F.png') }}",
         xref: "x", yref: "y",
         x: BG_X_MIN,
         y: BG_Y_MAX,
@@ -577,7 +577,7 @@
       
       const bgImage = (currentCoord === "AREA")
         ? {
-          source: "/static/nexus_10F.png",
+          source: "{{ url_for('static', filename='nexus_10F.png') }}",
           xref: "x",
           yref: "y",
           x: -30000 / 2000,          // あなたのデータ最小X
@@ -589,7 +589,7 @@
           layer: "below"
         }
       : {
-          source: "/static/nexus_10F.png",
+          source: "{{ url_for('static', filename='nexus_10F.png') }}",
           xref: "x",
           yref: "y",
           x: -30000,        // 左上の X
@@ -636,7 +636,7 @@
 
     const bgImage = (currentCoord === "AREA")
       ? {
-        source: "/static/nexus_10F.png",
+        source: "{{ url_for('static', filename='nexus_10F.png') }}",
         xref: "x",
         yref: "y",
         x: -30000 / 2000,          // あなたのデータ最小X
@@ -648,7 +648,7 @@
         layer: "below"
       }
     : {
-        source: "/static/nexus_10F.png",
+        source: "{{ url_for('static', filename='nexus_10F.png') }}",
         xref: "x",
         yref: "y",
         x: -30000,          // あなたのデータ最小X
